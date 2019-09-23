@@ -75,7 +75,7 @@ public:
 
 private:
 
-    size_t calcOffset(const size_t n, const size_t c, const size_t h, const size_t w) const {
+    size_t calcOffset(const size_t n, const size_t c, const size_t h, const size_t w) const noexcept {
         return n*C*H*W + c*H*W + h*W + w;
     }
 
@@ -106,8 +106,10 @@ batchNorm(
    const size_t H = dims.h;
    const size_t W = dims.w;
 
-   std::vector<T> sample_mean(running_mean.size());
-   std::vector<T> sample_std(running_std.size());
+   std::vector<T> sample_mean;
+   sample_mean.reserve(running_mean.size());
+   std::vector<T> sample_std;
+   sample_std.reserve(running_std.size());
 
    const size_t nhw = N*H*W;
 
