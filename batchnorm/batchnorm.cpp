@@ -3,6 +3,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <omp.h>
 
 
 template <typename T>
@@ -105,10 +106,18 @@ batchNorm(
     // TODO: calculate new mean
     // TODO: calculate new variance
 
-    const auto [N, C, H, W] = data.dims();
+   // const auto [N, C, H, W] = data.dims();
+
+   const auto dims = data.dims();
+   const int N = dims[0];
+   const int C = dims[1];
+   const int H = dims[2];
+   const int W = dims[3];
 
     Tensor4D<T> output(N, C, H, W);
 
+    // parallelize over the batch dimension
+    #pragma omp parallel for
     for (size_t n = 0; n < N; ++n) {
         for (size_t c = 0; c < C; ++c) {
             for (size_t h = 0; h < H; ++h) {
