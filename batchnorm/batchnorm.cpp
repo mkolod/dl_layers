@@ -1,12 +1,17 @@
 #include <array>
-#import <cmath>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <tuple>
 #include <vector>
 #include <omp.h>
 
-
+struct index {
+    size_t n;
+    size_t c;
+    size_t h;
+    size_t w;
+};
 
 template <typename T>
 class Tensor4D {
@@ -17,29 +22,24 @@ public:
              const size_t C,
              const size_t H,
              const size_t W) :
-             ptr(new T[N*C*H*W]),
+             ptr(std::unique_ptr<T>(new T[N*C*H*W])),
              N(N), C(C), H(H), W(W) {
     }
 
-    Tensor4D() {
+    Tensor4D() = default;
 
-    }
-
-    ~Tensor4D() {
-        safe_delete(ptr);
-    }
+    ~Tensor4D() = default;
 
     // copy constructor
-    Tensor4D(const Tensor4D& other) = default;
+    Tensor4D(const Tensor4D& other) = delete;
 
     // copy assignment operator
-    Tensor4D& operator=(const Tensor4D& other) = default;
+    Tensor4D& operator=(const Tensor4D& other) = delete;
 
     // move constructor
     Tensor4D(Tensor4D&& other) :
     N(other.N), C(other.C), H(other.H), W(other.W) {
-       ptr = other.ptr;
-       other.ptr = nullptr;
+       ptr = std::move(other.ptr);
     }
 
     // move assignment operator
@@ -51,27 +51,26 @@ public:
         W = other.W;
 
         if (this != &other) {
-            safe_delete(ptr);
-            ptr = other.ptr;
+            ptr = std::move(other.ptr);
             other.ptr = nullptr;
         }
         return *this;
     }
 
-    T at(const size_t n, const size_t c, const size_t h, const size_t w) const {
-        return ptr[calcOffset(n, c, h, w)];
+    T& operator[](struct index idx) {
+        return ptr.get()[calcOffset(idx.n, idx.c, idx.h, idx.w)];
     }
 
-    T& at(const size_t n, const size_t c, const size_t h, const size_t w) {
-        return ptr[calcOffset(n, c, h, w)];
+    T operator[](struct index idx) const {
+        return ptr.get()[calcOffset(idx.n, idx.c, idx.h, idx.w)];
     }
 
-    std::array<size_t, 4> dims() const {
-        return {{N, C, H, W}};
+    struct index dims() const {
+        return {N, C, H, W};
     }
 
     T* data() {
-        return ptr;
+        return ptr.get();
     }
 
 private:
@@ -80,13 +79,7 @@ private:
         return n*C*H*W + c*H*W + h*W + w;
     }
 
-    void safe_delete(T* ptr) {
-        if (ptr != nullptr) {
-            delete [] ptr;
-        }
-    }
-
-    T* ptr;
+    std::unique_ptr<T> ptr;
     const size_t N;
     const size_t C;
     const size_t H;
@@ -108,10 +101,10 @@ batchNorm(
    // Have to unpack manually rather than with "auto [N, C, H, W] = data.dims()"
    // because the latter seems to make OpenMP unhappy.
    const auto dims = data.dims();
-   const size_t N = dims[0];
-   const size_t C = dims[1];
-   const size_t H = dims[2];
-   const size_t W = dims[3];
+   const size_t N = dims.n;
+   const size_t C = dims.c;
+   const size_t H = dims.h;
+   const size_t W = dims.w;
 
    std::vector<T> sample_mean(running_mean.size());
    std::vector<T> sample_std(running_std.size());
@@ -131,7 +124,7 @@ batchNorm(
            for (size_t h = 0; h < H; ++h) {
                for (size_t w = 0; w < W; ++w) {
                    count++;
-                   T datum = data.at(n, c, h, w);
+                   T datum = data[{n, c, h, w}];
                    if (count == 1) {
                        m = datum;
                    } else {
@@ -155,11 +148,11 @@ batchNorm(
             for (size_t h = 0; h < H; ++h) {
                 for (size_t w = 0; w < W; ++w) {
                     if (inference) {
-                        output.at(n, c, h, w) =
-                                scale * (data.at(n, c, h, w) - running_mean.at(c)) / (running_std.at(c) + eps) + shift;
+                        output[{n, c, h, w}] =
+                                scale * (data[{n, c, h, w}] - running_mean[c]) / (running_std[c] + eps) + shift;
                     } else {
-                        output.at(n, c, h, w) =
-                                scale * (data.at(n, c, h, w) - sample_mean.at(c)) / (sample_std.at(c) + eps) + shift;
+                        output[{n, c, h, w}] =
+                                scale * (data[{n, c, h, w}] - sample_mean[c]) / (sample_std[c] + eps) + shift;
                     }
                 }
             }
