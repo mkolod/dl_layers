@@ -1,9 +1,11 @@
 #include <array>
+#import <cmath>
 #include <iostream>
 #include <memory>
 #include <tuple>
 #include <vector>
 #include <omp.h>
+
 
 
 template <typename T>
@@ -103,20 +105,50 @@ batchNorm(
         T eps = 1e-5,
         bool inference = true) {
 
-    // TODO: calculate new mean
-    // TODO: calculate new variance
-
-   // const auto [N, C, H, W] = data.dims();
-
+   // Have to unpack manually rather than with "auto [N, C, H, W] = data.dims()"
+   // because the latter seems to make OpenMP unhappy.
    const auto dims = data.dims();
-   const int N = dims[0];
-   const int C = dims[1];
-   const int H = dims[2];
-   const int W = dims[3];
+   const size_t N = dims[0];
+   const size_t C = dims[1];
+   const size_t H = dims[2];
+   const size_t W = dims[3];
 
-    Tensor4D<T> output(N, C, H, W);
+   std::vector<T> sample_mean(running_mean.size());
+   std::vector<T> sample_std(running_std.size());
 
-    // parallelize over the batch dimension
+   const size_t nhw = N*H*W;
+
+   // parallelize over channels
+   #pragma omp parallel for
+   for (size_t c = 0; c < C; ++c) {
+
+       size_t count = 0;
+       T m;
+       T s = 0;
+
+       // Welford's formula for stable mean and std
+       for (size_t n = 0; n < N; ++n) {
+           for (size_t h = 0; h < H; ++h) {
+               for (size_t w = 0; w < W; ++w) {
+                   count++;
+                   T datum = data.at(n, c, h, w);
+                   if (count == 1) {
+                       m = datum;
+                   } else {
+                       T mNext = m + (datum - m) / count;
+                       s = s + (datum - m)*(datum - mNext);
+                       m = mNext;
+                   }
+
+               }
+           }
+       }
+       sample_mean.at(c) = m;
+       sample_std.at(c) = sqrt(s / (count - 1));
+   }
+
+   Tensor4D<T> output(N, C, H, W);
+
     #pragma omp parallel for
     for (size_t n = 0; n < N; ++n) {
         for (size_t c = 0; c < C; ++c) {
@@ -124,16 +156,25 @@ batchNorm(
                 for (size_t w = 0; w < W; ++w) {
                     if (inference) {
                         output.at(n, c, h, w) =
-                                scale * (data.at(n, c, h, w) - running_mean.at(c)) / running_std.at(c) + shift;
+                                scale * (data.at(n, c, h, w) - running_mean.at(c)) / (running_std.at(c) + eps) + shift;
+                    } else {
+                        output.at(n, c, h, w) =
+                                scale * (data.at(n, c, h, w) - sample_mean.at(c)) / (sample_std.at(c) + eps) + shift;
                     }
-                    // TODO: else training (use mean/std, not running_mean/running_stdev)
                 }
             }
         }
     }
 
-    std::vector<T> new_running_mean;
-    std::vector<T> new_running_std;
+    std::vector<T> new_running_mean(running_mean.size());
+    std::vector<T> new_running_std(running_std.size());
+    for (size_t idx = 0; idx < running_mean.size(); ++idx) {
+        if (!inference) {
+            new_running_mean.at(idx) = running_mean.at(idx) * momentum + (1 - momentum) * sample_mean.at(idx);
+            new_running_std.at(idx) = running_std.at(idx) * momentum + (1 - momentum) * sample_std.at(idx);
+        }
+    }
+
     return std::make_tuple(std::move(output), new_running_mean, new_running_std);
 }
 
